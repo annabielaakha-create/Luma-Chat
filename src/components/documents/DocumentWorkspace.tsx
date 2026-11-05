@@ -77,7 +77,7 @@ export const DocumentWorkspace: React.FC<DocumentWorkspaceProps> = ({
         <div>
           <h1 className="text-xl font-semibold text-[#F2F0ED] tracking-tight">Documents Workspace</h1>
           <p className="text-xs text-[#A5A29F] mt-1">
-            Upload, extract, and inspect documents for AI analysis (PDF, DOCX, TXT, MD, CSV)
+            Upload, extract, and inspect documents for AI analysis (PDF, DOCX, DOC, RTF, ODT, TXT, MD, CSV, JSON)
           </p>
         </div>
 
@@ -87,7 +87,7 @@ export const DocumentWorkspace: React.FC<DocumentWorkspaceProps> = ({
             ref={fileInputRef}
             onChange={handleFileUpload}
             multiple
-            accept=".pdf,.docx,.txt,.md,.csv,.json,.py,.js,.ts"
+            accept=".pdf,.docx,.doc,.txt,.rtf,.odt,.md,.csv,.tsv,.json,.xml,.yaml,.yml,.py,.js,.ts,.tsx,.html"
             className="hidden"
           />
           <button

@@ -218,14 +218,14 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
               ref={fileInputRef}
               onChange={handleFileUpload}
               multiple
-              accept=".pdf,.docx,.txt,.md,.csv,.json,.py,.js,.ts"
+              accept=".pdf,.docx,.doc,.txt,.rtf,.odt,.md,.csv,.tsv,.json,.xml,.yaml,.yml,.py,.js,.ts,.tsx,.html"
               className="hidden"
             />
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading || isGenerating}
-              title="Attach Document (PDF, DOCX, TXT, CSV)"
+              title="Attach Document (PDF, DOCX, DOC, RTF, ODT, TXT, CSV, JSON)"
               className="p-1.5 rounded-lg text-[#A5A29F] hover:text-[#F2F0ED] hover:bg-[#303030] transition-colors disabled:opacity-50"
             >
               <Paperclip className="w-4 h-4" />

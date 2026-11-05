@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { ChatMessage, Artifact } from '../../types';
-import { Copy, Check, Bookmark, RotateCcw, FileText, FileCode, ArrowUpRight } from 'lucide-react';
+import { Copy, Check, Bookmark, RotateCcw, FileText, ArrowUpRight } from 'lucide-react';
 import { marked } from 'marked';
+import { InlineArtifactCard } from '../artifacts/InlineArtifactCard';
 
 interface MessageItemProps {
   message: ChatMessage;
@@ -227,51 +228,17 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               </div>
             )}
 
-            {/* Assistant Generated Artifacts Cards */}
+            {/* Assistant Generated Artifacts with Automatic Multi-Format Inline Previews */}
             {message.artifacts && message.artifacts.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {message.artifacts.map((art) => {
-                  const isSelected = activeArtifactId === art.id;
-                  return (
-                    <div
-                      key={art.id}
-                      onClick={() => onOpenArtifact && onOpenArtifact(art)}
-                      className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
-                        isSelected
-                          ? 'border-[#DA4B2A] bg-[#292929] shadow-md'
-                          : 'border-[#383838] bg-[#242424] hover:border-[#DA4B2A]/70 hover:bg-[#292929]'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="p-2 rounded-lg bg-[#202020] border border-[#383838] text-[#DA4B2A] shrink-0">
-                          {art.type === 'html' ? (
-                            <FileCode className="w-4 h-4" />
-                          ) : (
-                            <FileText className="w-4 h-4" />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-[#F2F0ED] truncate">
-                              {art.title}
-                            </span>
-                            <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#383838] text-[#F2F0ED] font-mono">
-                              {art.type}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-[#A5A29F] mt-0.5">
-                            Interactive Artifact · Click to open in workspace
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 text-xs text-[#DA4B2A] font-medium shrink-0 pl-3">
-                        <span>View</span>
-                        <ArrowUpRight className="w-3.5 h-3.5" />
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="mt-3 space-y-3 w-full">
+                {message.artifacts.map((art) => (
+                  <InlineArtifactCard
+                    key={art.id}
+                    artifact={art}
+                    onOpenInWorkspace={(a) => onOpenArtifact && onOpenArtifact(a)}
+                    isSelected={activeArtifactId === art.id}
+                  />
+                ))}
               </div>
             )}
 

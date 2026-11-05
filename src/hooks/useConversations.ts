@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../services/firebase';
 import { Conversation, ChatMessage } from '../types';
+import { normalizeFirestoreData } from '../utils/firestoreNormalizer';
 
 const LOCAL_STORAGE_CONVS_KEY = 'luma_conversations';
 const LOCAL_STORAGE_MSGS_PREFIX = 'luma_messages_';
@@ -58,16 +59,39 @@ export function useConversations(user: User | null) {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const convs: Conversation[] = [];
+        const firestoreConvs: Conversation[] = [];
         snapshot.forEach((d) => {
-          convs.push(d.data() as Conversation);
+          firestoreConvs.push(d.data() as Conversation);
         });
-        setConversations(convs);
+
+        // Merge Firestore snapshot with any pending local optimistic conversations
+        setConversations((prev) => {
+          const firestoreMap = new Map<string, Conversation>();
+          firestoreConvs.forEach((c) => firestoreMap.set(c.id, c));
+
+          const merged: Conversation[] = [...firestoreConvs];
+
+          // Preserve pending optimistic conversations not yet indexed in snapshot
+          prev.forEach((localConv) => {
+            if (!firestoreMap.has(localConv.id)) {
+              merged.push(localConv);
+            }
+          });
+
+          // Sort by updatedAt descending to ensure latest activity is top
+          merged.sort((a, b) => {
+            const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+            const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+            return timeB - timeA;
+          });
+
+          return merged;
+        });
         setLoading(false);
 
         // Auto select first conversation if active one is missing
-        if (convs.length > 0 && !activeConversationId) {
-          setActiveConversationId(convs[0].id);
+        if (firestoreConvs.length > 0 && !activeConversationId) {
+          setActiveConversationId(firestoreConvs[0].id);
         }
       },
       (error) => {
@@ -122,63 +146,77 @@ export function useConversations(user: User | null) {
     return () => unsubscribe();
   }, [activeConversationId, user]);
 
-  // Create a new conversation
+  // Create a new conversation immediately with optimistic UI update
   const createConversation = useCallback(
     async (model = 'LUMA 1.0', initialTitle = 'New Conversation') => {
-      const id = 'conv_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      const id = 'conv_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+      const now = new Date().toISOString();
+      const currentUid = user ? user.uid : 'guest';
       const newConv: Conversation = {
         id,
-        userId: user ? user.uid : 'guest',
+        userId: currentUid,
         title: initialTitle,
         model,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
         messageCount: 0
       };
 
+      // 1. Optimistically display in sidebar immediately
+      setConversations((prev) => [newConv, ...prev.filter((c) => c.id !== id)]);
+      setActiveConversationId(id);
+      setMessages([]);
+
+      // 2. Persist to Firestore or localStorage
       if (user) {
         const path = `conversations/${id}`;
         try {
           await setDoc(doc(db, 'conversations', id), newConv);
         } catch (err) {
+          console.error('Failed to create conversation document:', err);
           handleFirestoreError(err, OperationType.CREATE, path);
         }
       } else {
-        const updated = [newConv, ...conversations];
-        setConversations(updated);
+        const cached = localStorage.getItem(LOCAL_STORAGE_CONVS_KEY);
+        let list: Conversation[] = [];
+        if (cached) {
+          try { list = JSON.parse(cached); } catch { list = []; }
+        }
+        const updated = [newConv, ...list.filter((c) => c.id !== id)];
         localStorage.setItem(LOCAL_STORAGE_CONVS_KEY, JSON.stringify(updated));
       }
 
-      setActiveConversationId(id);
-      setMessages([]);
       return id;
     },
-    [user, conversations]
+    [user]
   );
 
   // Save or update a message
   const saveMessage = useCallback(
     async (msg: ChatMessage) => {
+      const currentUid = user ? user.uid : 'guest';
+      const now = new Date().toISOString();
+
       // Clean and ensure valid properties without undefined values
       const sanitizedMsg: Record<string, any> = {
         id: msg.id,
         conversationId: msg.conversationId,
-        userId: user ? user.uid : 'guest',
+        userId: currentUid,
         role: msg.role,
         content: msg.content || '',
-        createdAt: msg.createdAt || new Date().toISOString()
+        createdAt: msg.createdAt || now
       };
       if (msg.model) sanitizedMsg.model = msg.model;
       if (msg.attachments && msg.attachments.length > 0) sanitizedMsg.attachments = msg.attachments;
       if (msg.artifacts && msg.artifacts.length > 0) sanitizedMsg.artifacts = msg.artifacts;
       if (msg.isStreaming !== undefined) sanitizedMsg.isStreaming = Boolean(msg.isStreaming);
 
-      // Optimistically update local message state immediately
+      // 1. Optimistically update local message state immediately
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === msg.id);
         const resolved: ChatMessage = {
           ...msg,
-          userId: user ? user.uid : 'guest'
+          userId: currentUid
         };
         if (idx >= 0) {
           const next = [...prev];
@@ -188,33 +226,72 @@ export function useConversations(user: User | null) {
         return [...prev, resolved];
       });
 
+      // 2. Optimistically update conversation entry in the sidebar immediately
+      const lastMsgSnippet = (msg.content || '').slice(0, 120);
+      setConversations((prev) => {
+        const idx = prev.findIndex((c) => c.id === msg.conversationId);
+        if (idx >= 0) {
+          const updated = [...prev];
+          const existing = updated[idx];
+          let updatedTitle = existing.title;
+          // If title was generic 'New Conversation', adapt to the first user prompt
+          if (msg.role === 'user' && (existing.title === 'New Conversation' || !existing.title)) {
+            updatedTitle = msg.content.trim().slice(0, 36) || 'New Conversation';
+          }
+          updated[idx] = {
+            ...existing,
+            title: updatedTitle,
+            updatedAt: now,
+            lastMessage: lastMsgSnippet,
+            messageCount: (existing.messageCount || 0) + 1
+          };
+          // Move updated conversation to the top
+          return updated.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        } else {
+          // If conversation is brand new, immediately show it at the top of the sidebar
+          const newConv: Conversation = {
+            id: msg.conversationId,
+            userId: currentUid,
+            title: msg.content.trim().slice(0, 36) || 'New Conversation',
+            model: msg.model || 'LUMA 1.0',
+            createdAt: now,
+            updatedAt: now,
+            lastMessage: lastMsgSnippet,
+            messageCount: 1
+          };
+          return [newConv, ...prev];
+        }
+      });
+
+      // 3. Persist to Firestore or localStorage
       if (user) {
         const path = `conversations/${msg.conversationId}/messages/${msg.id}`;
         try {
           const convRef = doc(db, 'conversations', msg.conversationId);
-          // Verify that the parent conversation document exists in Firestore before writing subcollection message
-          const convSnap = await getDoc(convRef);
-          if (!convSnap.exists()) {
-            await setDoc(convRef, {
-              id: msg.conversationId,
-              userId: user.uid,
-              title: msg.content.trim().slice(0, 36) || 'New Conversation',
-              model: msg.model || 'LUMA 1.0',
-              createdAt: msg.createdAt || new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              lastMessage: (msg.content || '').slice(0, 120),
-              messageCount: 1
-            });
-          } else {
-            await updateDoc(convRef, {
-              updatedAt: new Date().toISOString(),
-              lastMessage: (msg.content || '').slice(0, 120)
-            });
+          const convUpdate: Record<string, any> = {
+            id: msg.conversationId,
+            userId: user.uid,
+            updatedAt: now,
+            lastMessage: lastMsgSnippet
+          };
+
+          if (msg.role === 'user') {
+            convUpdate.title = msg.content.trim().slice(0, 36) || 'New Conversation';
+            convUpdate.model = msg.model || 'LUMA 1.0';
+            convUpdate.createdAt = msg.createdAt || now;
           }
 
-          // Persist message with verified user.uid ownership
-          await setDoc(doc(db, 'conversations', msg.conversationId, 'messages', msg.id), sanitizedMsg);
+          // Recursively clean undefined values to protect Firestore from crashes
+          const cleanConvUpdate = normalizeFirestoreData(convUpdate);
+          const cleanSanitizedMsg = normalizeFirestoreData(sanitizedMsg);
+
+          // Concurrently update conversation metadata & write the message
+          await Promise.all([
+            setDoc(convRef, cleanConvUpdate, { merge: true }),
+            setDoc(doc(db, 'conversations', msg.conversationId, 'messages', msg.id), cleanSanitizedMsg)
+          ]);
         } catch (err) {
+          console.error('Failed to save message to Firestore (local state preserved):', err);
           handleFirestoreError(err, OperationType.WRITE, path);
         }
       } else {
@@ -233,17 +310,38 @@ export function useConversations(user: User | null) {
         else list.push(msg);
         localStorage.setItem(key, JSON.stringify(list));
 
-        // Update conversation summary
-        const updatedConvs = conversations.map((c) =>
-          c.id === msg.conversationId
-            ? { ...c, updatedAt: new Date().toISOString(), lastMessage: (msg.content || '').slice(0, 120) }
-            : c
-        );
-        setConversations(updatedConvs);
-        localStorage.setItem(LOCAL_STORAGE_CONVS_KEY, JSON.stringify(updatedConvs));
+        // Update guest conversations in localStorage
+        const cachedConvs = localStorage.getItem(LOCAL_STORAGE_CONVS_KEY);
+        let convList: Conversation[] = [];
+        if (cachedConvs) {
+          try { convList = JSON.parse(cachedConvs); } catch { convList = []; }
+        }
+        const cIdx = convList.findIndex((c) => c.id === msg.conversationId);
+        if (cIdx >= 0) {
+          convList[cIdx] = {
+            ...convList[cIdx],
+            updatedAt: now,
+            lastMessage: lastMsgSnippet
+          };
+          if (msg.role === 'user' && convList[cIdx].title === 'New Conversation') {
+            convList[cIdx].title = msg.content.trim().slice(0, 36) || 'New Conversation';
+          }
+        } else {
+          convList.unshift({
+            id: msg.conversationId,
+            userId: 'guest',
+            title: msg.content.trim().slice(0, 36) || 'New Conversation',
+            model: msg.model || 'LUMA 1.0',
+            createdAt: now,
+            updatedAt: now,
+            lastMessage: lastMsgSnippet,
+            messageCount: 1
+          });
+        }
+        localStorage.setItem(LOCAL_STORAGE_CONVS_KEY, JSON.stringify(convList));
       }
     },
-    [user, conversations]
+    [user]
   );
 
   // Rename a conversation

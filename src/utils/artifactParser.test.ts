@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractArtifactsFromMessage } from './artifactParser';
+import { extractArtifactsFromMessage } from './artifactParser.ts';
 
 test('extractArtifactsFromMessage extracts <luma_artifact> tags accurately', () => {
   const raw = `Here is your counter app:
@@ -46,3 +46,22 @@ test('extractArtifactsFromMessage returns original text when no artifacts presen
   assert.equal(result.artifacts.length, 0);
   assert.equal(result.displayContent, raw);
 });
+
+test('extractArtifactsFromMessage extracts SVG graphics accurately', () => {
+  const raw = `Here is your requested vector illustration:\n\`\`\`svg:title="Sun Icon"\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></svg>\n\`\`\``;
+  const result = extractArtifactsFromMessage('msg_4', 'conv_1', raw);
+  assert.equal(result.artifacts.length, 1);
+  assert.equal(result.artifacts[0].type, 'svg');
+  assert.equal(result.artifacts[0].title, 'Sun Icon');
+  assert.match(result.artifacts[0].content, /<circle cx="12"/);
+});
+
+test('extractArtifactsFromMessage extracts CSV / Table datasets accurately', () => {
+  const raw = `Here is the financial breakdown:\n\`\`\`table:title="Q3 Revenue"\nQuarter,Revenue,Growth\nQ1,120000,12%\nQ2,145000,20%\nQ3,180000,24%\n\`\`\``;
+  const result = extractArtifactsFromMessage('msg_5', 'conv_1', raw);
+  assert.equal(result.artifacts.length, 1);
+  assert.equal(result.artifacts[0].type, 'table');
+  assert.equal(result.artifacts[0].title, 'Q3 Revenue');
+  assert.match(result.artifacts[0].content, /Revenue,Growth/);
+});
+

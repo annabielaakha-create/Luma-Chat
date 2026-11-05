@@ -4,9 +4,10 @@ export type LumaLoadingStage = 'thinking' | 'writing' | 'finishing';
 
 interface LumaLoadingIndicatorProps {
   stage: LumaLoadingStage;
+  details?: string;
 }
 
-export const LumaLoadingIndicator: React.FC<LumaLoadingIndicatorProps> = ({ stage }) => {
+export const LumaLoadingIndicator: React.FC<LumaLoadingIndicatorProps> = ({ stage, details }) => {
   const stageLabels: Record<LumaLoadingStage, string> = {
     thinking: 'Thinking...',
     writing: 'Writing...',
@@ -14,7 +15,7 @@ export const LumaLoadingIndicator: React.FC<LumaLoadingIndicatorProps> = ({ stag
   };
 
   return (
-    <div className="flex items-start gap-3 py-3 animate-in fade-in duration-200">
+    <div className="flex items-start gap-3 py-3 animate-in fade-in duration-200 select-none">
       {/* Circular Rotating LUMA Logo Avatar */}
       <div className="relative shrink-0 w-8 h-8 rounded-xl bg-[#292929] border border-[#383838] flex items-center justify-center overflow-hidden">
         {/* Subtle, smooth circular rotating ring in #DA4B2A */}
@@ -49,6 +50,9 @@ export const LumaLoadingIndicator: React.FC<LumaLoadingIndicatorProps> = ({ stag
             {stageLabels[stage] || 'Thinking...'}
           </span>
         </div>
+        {details && (
+          <span className="text-[11px] text-[#77736F] mt-0.5">{details}</span>
+        )}
       </div>
     </div>
   );

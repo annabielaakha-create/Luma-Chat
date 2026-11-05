@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Artifact } from '../../types';
 import {
   Code,
@@ -17,9 +17,19 @@ import {
   ChevronDown,
   Monitor,
   Smartphone,
-  Tablet
+  Tablet,
+  Table as TableIcon,
+  Image as ImageIcon,
+  ZoomIn,
+  ZoomOut,
+  RotateCw,
+  Search,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { marked } from 'marked';
+import { cleanSvg } from '../../utils/svgCleaner';
+import { downloadPdf } from '../../utils/pdfGenerator';
 
 interface ArtifactWorkspaceProps {
   artifacts: Artifact[];
@@ -45,12 +55,15 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
   const [copied, setCopied] = useState(false);
   const [revisionPrompt, setRevisionPrompt] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [svgZoom, setSvgZoom] = useState(1);
+  const [svgTheme, setSvgTheme] = useState<'dark' | 'light' | 'checkerboard'>('dark');
+  const [tableSearch, setTableSearch] = useState('');
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const activeArtifact = artifacts.find((a) => a.id === activeArtifactId) || artifacts[0];
 
-  // If artifact is not HTML/SVG, default to code/document view
+  // Default view mode based on artifact type
   useEffect(() => {
     if (activeArtifact) {
       if (activeArtifact.type === 'code') {
@@ -58,6 +71,8 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
       } else {
         setViewMode('preview');
       }
+      setSvgZoom(1);
+      setTableSearch('');
     }
   }, [activeArtifact?.id, activeArtifact?.type]);
 
@@ -74,6 +89,48 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [isDropdownOpen]);
 
+  // Cleaned SVG content with valid viewBox and stripped fences
+  const cleanedSvg = useMemo(() => {
+    if (!activeArtifact || activeArtifact.type !== 'svg') return null;
+    return cleanSvg(activeArtifact.content);
+  }, [activeArtifact?.content, activeArtifact?.type]);
+
+  // Parsed table data for table artifacts
+  const parsedTable = useMemo(() => {
+    if (!activeArtifact || activeArtifact.type !== 'table') return null;
+    const lines = activeArtifact.content.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) return { headers: [], rows: [] };
+
+    let headers: string[] = [];
+    let rows: string[][] = [];
+
+    if (lines[0].includes('|')) {
+      const parseRow = (line: string) =>
+        line
+          .replace(/^\|/, '')
+          .replace(/\|$/, '')
+          .split('|')
+          .map((cell) => cell.trim());
+
+      headers = parseRow(lines[0]);
+      const dataLines = lines.slice(1).filter((l) => !l.match(/^[|\s\-:]+$/));
+      rows = dataLines.map(parseRow);
+    } else {
+      const delimiter = lines[0].includes('\t') ? '\t' : ',';
+      headers = lines[0].split(delimiter).map((c) => c.trim().replace(/^["']|["']$/g, ''));
+      rows = lines.slice(1).map((line) =>
+        line.split(delimiter).map((c) => c.trim().replace(/^["']|["']$/g, ''))
+      );
+    }
+
+    if (tableSearch.trim()) {
+      const q = tableSearch.toLowerCase();
+      rows = rows.filter((row) => row.some((cell) => cell.toLowerCase().includes(q)));
+    }
+
+    return { headers, rows };
+  }, [activeArtifact?.content, activeArtifact?.type, tableSearch]);
+
   if (!activeArtifact) {
     return null;
   }
@@ -85,31 +142,47 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
   };
 
   const handleDownload = () => {
+    // True binary PDF generation and download
+    if (activeArtifact.type === 'pdf') {
+      downloadPdf(activeArtifact.title, activeArtifact.content);
+      return;
+    }
+
     let extension = 'txt';
     let mimeType = 'text/plain';
 
     if (activeArtifact.type === 'html') {
       extension = 'html';
       mimeType = 'text/html';
-    } else if (activeArtifact.type === 'pdf') {
-      extension = 'pdf';
-      mimeType = 'application/pdf';
+    } else if (activeArtifact.type === 'svg') {
+      extension = 'svg';
+      mimeType = 'image/svg+xml';
+    } else if (activeArtifact.type === 'table') {
+      extension = 'csv';
+      mimeType = 'text/csv';
     } else if (activeArtifact.type === 'code') {
       extension = activeArtifact.language || 'txt';
       if (extension === 'javascript') extension = 'js';
       if (extension === 'typescript') extension = 'ts';
       if (extension === 'python') extension = 'py';
-      mimeType = 'text/plain';
-    } else if (activeArtifact.type === 'document') {
+      if (extension === 'json') {
+        extension = 'json';
+        mimeType = 'application/json';
+      }
+    } else if (activeArtifact.type === 'document' || activeArtifact.type === 'markdown') {
       extension = 'md';
       mimeType = 'text/markdown';
     }
 
-    const blob = new Blob([activeArtifact.content], { type: mimeType });
+    const payload = activeArtifact.type === 'svg'
+      ? cleanSvg(activeArtifact.content).svgHtml
+      : activeArtifact.content;
+
+    const blob = new Blob([payload], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${activeArtifact.title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}.${extension}`;
+    link.download = `${activeArtifact.title.toLowerCase().replace(/[^a-z0-9_-]+/g, '_')}.${extension}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -117,7 +190,15 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
   };
 
   const handleOpenInNewTab = () => {
-    const blob = new Blob([activeArtifact.content], { type: 'text/html' });
+    let mime = 'text/html';
+    let payload = activeArtifact.content;
+
+    if (activeArtifact.type === 'svg') {
+      mime = 'image/svg+xml';
+      payload = cleanSvg(activeArtifact.content).svgHtml;
+    }
+
+    const blob = new Blob([payload], { type: mime });
     const url = URL.createObjectURL(blob);
     window.open(url, '_blank');
   };
@@ -137,29 +218,39 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
     }
   };
 
+  const getFormatIcon = () => {
+    switch (activeArtifact.type) {
+      case 'html': return <FileCode className="w-4 h-4 text-[#DA4B2A]" />;
+      case 'svg': return <ImageIcon className="w-4 h-4 text-[#DA4B2A]" />;
+      case 'table': return <TableIcon className="w-4 h-4 text-[#DA4B2A]" />;
+      case 'pdf': return <FileText className="w-4 h-4 text-[#DA4B2A]" />;
+      case 'document':
+      case 'markdown': return <FileText className="w-4 h-4 text-[#DA4B2A]" />;
+      default: return <Code className="w-4 h-4 text-[#DA4B2A]" />;
+    }
+  };
+
+  const isPreviewSupported = activeArtifact.type !== 'code';
+
   return (
     <div
-      className={`flex flex-col h-full border-l border-[#383838] shadow-2xl transition-all duration-200 select-none ${
+      className={`flex flex-col h-full border-l border-[#383838] shadow-2xl transition-all duration-200 select-none min-w-0 ${
         isFullScreen ? 'fixed inset-0 z-50 bg-[#202020]' : 'relative bg-[#202020]'
       }`}
       style={{ backgroundColor: '#202020' }}
     >
       {/* Top Header Bar */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#383838] shrink-0 bg-[#242424]">
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[#383838] shrink-0 bg-[#242424] min-w-0 z-20 gap-2">
         {/* Left: Artifact Title & Selector Dropdown */}
-        <div className="flex items-center gap-2.5 min-w-0" ref={dropdownRef}>
-          <div className="p-1.5 rounded-lg bg-[#292929] border border-[#383838] text-[#DA4B2A] shrink-0">
-            {activeArtifact.type === 'html' ? (
-              <FileCode className="w-4 h-4" />
-            ) : (
-              <FileText className="w-4 h-4" />
-            )}
+        <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden" ref={dropdownRef}>
+          <div className="p-1.5 rounded-lg bg-[#292929] border border-[#383838] shrink-0">
+            {getFormatIcon()}
           </div>
 
-          <div className="relative min-w-0">
+          <div className="relative min-w-0 flex-1 overflow-hidden">
             <button
               onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              className="flex items-center gap-1.5 text-xs font-semibold text-[#F2F0ED] hover:text-[#DA4B2A] transition-colors truncate max-w-[200px] sm:max-w-[280px]"
+              className="flex items-center gap-1.5 text-xs font-semibold text-[#F2F0ED] hover:text-[#DA4B2A] transition-colors truncate max-w-full"
             >
               <span className="truncate">{activeArtifact.title}</span>
               {artifacts.length > 1 && (
@@ -167,8 +258,8 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
               )}
             </button>
 
-            <div className="text-[10px] text-[#77736F] flex items-center gap-1.5 mt-0.5">
-              <span className="uppercase tracking-wider font-mono">{activeArtifact.type}</span>
+            <div className="text-[10px] text-[#77736F] flex items-center gap-1.5 mt-0.5 truncate">
+              <span className="uppercase tracking-wider font-mono font-medium">{activeArtifact.type}</span>
               <span>·</span>
               <span>v{activeArtifact.version}</span>
             </div>
@@ -209,40 +300,40 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
         </div>
 
         {/* Right: Controls & Toggles */}
-        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+        <div className="flex items-center gap-1 shrink-0">
           {/* Preview / Code Segmented Toggle */}
-          {activeArtifact.type === 'html' && (
-            <div className="flex items-center p-0.5 rounded-lg bg-[#292929] border border-[#383838]">
+          {isPreviewSupported && (
+            <div className="flex items-center p-0.5 rounded-lg bg-[#292929] border border-[#383838] shrink-0">
               <button
                 onClick={() => setViewMode('preview')}
                 title="Interactive Preview"
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
                   viewMode === 'preview'
                     ? 'bg-[#DA4B2A] text-white shadow-xs'
                     : 'text-[#A5A29F] hover:text-[#F2F0ED]'
                 }`}
               >
                 <Eye className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Preview</span>
+                <span className="hidden md:inline">Preview</span>
               </button>
               <button
                 onClick={() => setViewMode('code')}
                 title="Source Code"
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
                   viewMode === 'code'
                     ? 'bg-[#DA4B2A] text-white shadow-xs'
                     : 'text-[#A5A29F] hover:text-[#F2F0ED]'
                 }`}
               >
                 <Code className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Code</span>
+                <span className="hidden md:inline">Code</span>
               </button>
             </div>
           )}
 
-          {/* Viewport size buttons for HTML Preview */}
+          {/* Viewport size buttons for HTML Preview (only in full screen or extra-large viewports) */}
           {activeArtifact.type === 'html' && viewMode === 'preview' && (
-            <div className="hidden lg:flex items-center p-0.5 rounded-lg bg-[#292929] border border-[#383838]">
+            <div className="hidden 2xl:flex items-center p-0.5 rounded-lg bg-[#292929] border border-[#383838] shrink-0">
               <button
                 onClick={() => setViewportMode('desktop')}
                 title="Desktop View"
@@ -267,6 +358,44 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
             </div>
           )}
 
+          {/* SVG Controls: Zoom and Contrast Background */}
+          {activeArtifact.type === 'svg' && viewMode === 'preview' && (
+            <div className="hidden sm:flex items-center gap-1">
+              <button
+                onClick={() => setSvgTheme(svgTheme === 'dark' ? 'light' : 'dark')}
+                title={svgTheme === 'dark' ? 'Light Background' : 'Dark Background'}
+                className="p-1.5 rounded-lg bg-[#292929] border border-[#383838] text-[#A5A29F] hover:text-[#F2F0ED] transition-colors"
+              >
+                {svgTheme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+              </button>
+
+              <div className="flex items-center p-0.5 rounded-lg bg-[#292929] border border-[#383838]">
+                <button
+                  onClick={() => setSvgZoom((z) => Math.max(0.5, z - 0.25))}
+                  title="Zoom Out"
+                  className="p-1 rounded text-[#77736F] hover:text-[#F2F0ED]"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <span className="px-1 text-[10px] font-mono text-[#A5A29F]">{Math.round(svgZoom * 100)}%</span>
+                <button
+                  onClick={() => setSvgZoom((z) => Math.min(3, z + 0.25))}
+                  title="Zoom In"
+                  className="p-1 rounded text-[#77736F] hover:text-[#F2F0ED]"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setSvgZoom(1)}
+                  title="Reset Zoom"
+                  className="p-1 rounded text-[#77736F] hover:text-[#F2F0ED]"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Copy Button */}
           <button
             onClick={handleCopyCode}
@@ -279,14 +408,14 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
           {/* Download Button */}
           <button
             onClick={handleDownload}
-            title="Download Artifact"
+            title={activeArtifact.type === 'pdf' ? 'Download PDF Document' : 'Download Artifact'}
             className="p-1.5 rounded-lg text-[#A5A29F] hover:text-[#F2F0ED] hover:bg-[#292929] border border-[#383838] transition-colors"
           >
             <Download className="w-3.5 h-3.5" />
           </button>
 
-          {/* Open in new tab (for HTML) */}
-          {activeArtifact.type === 'html' && (
+          {/* Open in new tab (for HTML or SVG) */}
+          {(activeArtifact.type === 'html' || activeArtifact.type === 'svg') && (
             <button
               onClick={handleOpenInNewTab}
               title="Open in new window"
@@ -319,8 +448,8 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
       </div>
 
       {/* Main Artifact Viewport */}
-      <div className="flex-1 overflow-hidden relative flex items-center justify-center p-3 bg-[#191919]">
-        {/* HTML LIVE PREVIEW */}
+      <div className="flex-1 min-h-0 overflow-auto relative flex items-center justify-center p-3 bg-[#191919]">
+        {/* 1. HTML LIVE PREVIEW */}
         {activeArtifact.type === 'html' && viewMode === 'preview' && (
           <div className={`h-full ${getViewportWidth()} transition-all duration-300 rounded-xl overflow-hidden shadow-2xl border border-[#383838] bg-white flex flex-col`}>
             <iframe
@@ -333,13 +462,96 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
           </div>
         )}
 
-        {/* CODE VIEW (Syntax highlighted editor view) */}
+        {/* 2. SVG VECTOR GRAPHIC PREVIEW */}
+        {activeArtifact.type === 'svg' && viewMode === 'preview' && cleanedSvg && (
+          <div
+            className={`w-full h-full rounded-xl border border-[#383838] flex items-center justify-center p-6 overflow-auto transition-colors ${
+              svgTheme === 'light' ? 'bg-[#FAFAFA]' : 'bg-[#202020]'
+            }`}
+          >
+            <div
+              style={{ transform: `scale(${svgZoom})`, transformOrigin: 'center center', transition: 'transform 0.15s ease-out' }}
+              className="w-full h-full max-w-full max-h-full flex items-center justify-center [&>svg]:max-w-full [&>svg]:max-h-[70vh] [&>svg]:w-auto [&>svg]:h-auto"
+              dangerouslySetInnerHTML={{ __html: cleanedSvg.svgHtml }}
+            />
+          </div>
+        )}
+
+        {/* 3. STRUCTURED DATA TABLE PREVIEW */}
+        {activeArtifact.type === 'table' && viewMode === 'preview' && parsedTable && (
+          <div className="w-full h-full rounded-xl border border-[#383838] bg-[#202020] flex flex-col overflow-hidden">
+            {/* Table search & row counter bar */}
+            <div className="p-3 border-b border-[#383838] flex items-center justify-between gap-3 bg-[#242424] shrink-0">
+              <div className="relative flex-1 max-w-xs">
+                <Search className="w-3.5 h-3.5 text-[#77736F] absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Filter table rows..."
+                  value={tableSearch}
+                  onChange={(e) => setTableSearch(e.target.value)}
+                  className="w-full pl-8 pr-2.5 py-1 rounded-lg text-xs bg-[#1e1e1e] border border-[#383838] text-[#F2F0ED] placeholder-[#77736F] focus:outline-none focus:border-[#DA4B2A]"
+                />
+              </div>
+              <div className="text-[11px] text-[#A5A29F] font-mono shrink-0">
+                {parsedTable.rows.length} rows · {parsedTable.headers.length} columns
+              </div>
+            </div>
+
+            {/* Scrollable table container */}
+            <div className="flex-1 min-h-0 overflow-auto p-3">
+              <table className="w-full border-collapse text-left text-xs border border-[#383838]">
+                <thead>
+                  <tr className="bg-[#282828] border-b border-[#383838]">
+                    {parsedTable.headers.map((h, i) => (
+                      <th key={i} className="px-3.5 py-2.5 font-semibold text-[#F2F0ED] border-r border-[#383838] last:border-r-0 whitespace-nowrap">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#383838]/60 font-sans">
+                  {parsedTable.rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={parsedTable.headers.length || 1} className="py-8 text-center text-[#77736F]">
+                        No matching records
+                      </td>
+                    </tr>
+                  ) : (
+                    parsedTable.rows.map((row, rIdx) => (
+                      <tr key={rIdx} className="hover:bg-[#262626] transition-colors">
+                        {row.map((cell, cIdx) => (
+                          <td key={cIdx} className="px-3.5 py-2 text-[#F2F0ED]/90 border-r border-[#383838]/40 last:border-r-0 whitespace-nowrap">
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* 4. DOCUMENT VIEW (Markdown render) */}
+        {(activeArtifact.type === 'document' || activeArtifact.type === 'markdown') && viewMode === 'preview' && (
+          <div className="w-full h-full overflow-y-auto rounded-xl border border-[#383838] bg-[#202020] p-6 max-w-3xl">
+            <div
+              className="luma-prose text-sm text-[#F2F0ED]"
+              dangerouslySetInnerHTML={{
+                __html: marked.parse(activeArtifact.content, { gfm: true }) as string
+              }}
+            />
+          </div>
+        )}
+
+        {/* 5. CODE VIEW (Syntax highlighted editor view) */}
         {(viewMode === 'code' || activeArtifact.type === 'code') && (
-          <div className="w-full h-full overflow-y-auto rounded-xl border border-[#383838] bg-[#202020] p-4 font-mono text-xs text-[#F2F0ED] leading-relaxed">
+          <div className="w-full h-full min-h-0 overflow-y-auto rounded-xl border border-[#383838] bg-[#1a1a1a] p-4 font-mono text-xs text-[#F2F0ED] leading-relaxed">
             <pre className="overflow-x-auto">
               <code>
                 {activeArtifact.content.split('\n').map((line, idx) => (
-                  <div key={idx} className="flex hover:bg-[#292929]/80 py-0.5">
+                  <div key={idx} className="flex hover:bg-[#252525] py-0.5">
                     <span className="w-10 select-none text-[#77736F] text-right pr-4 shrink-0 tabular-nums">
                       {idx + 1}
                     </span>
@@ -351,34 +563,33 @@ export const ArtifactWorkspace: React.FC<ArtifactWorkspaceProps> = ({
           </div>
         )}
 
-        {/* DOCUMENT VIEW (Markdown render) */}
-        {activeArtifact.type === 'document' && viewMode === 'preview' && (
-          <div className="w-full h-full overflow-y-auto rounded-xl border border-[#383838] bg-[#202020] p-6 max-w-3xl">
-            <div
-              className="luma-prose text-sm text-[#F2F0ED]"
-              dangerouslySetInnerHTML={{
-                __html: marked.parse(activeArtifact.content, { gfm: true }) as string
-              }}
-            />
-          </div>
-        )}
-
-        {/* PDF VIEW */}
+        {/* 6. PDF DOCUMENT VIEW */}
         {activeArtifact.type === 'pdf' && (
-          <div className="w-full h-full rounded-xl border border-[#383838] bg-[#202020] flex flex-col items-center justify-center p-6 text-center">
-            <FileText className="w-12 h-12 text-[#DA4B2A] mb-3" />
-            <h3 className="text-sm font-semibold text-[#F2F0ED]">{activeArtifact.title}</h3>
-            <p className="text-xs text-[#A5A29F] mt-1 max-w-sm">
-              Generated PDF Document. Click below to inspect or download.
+          <div className="w-full h-full rounded-xl border border-[#383838] bg-[#202020] flex flex-col items-center justify-center p-8 text-center max-w-lg">
+            <div className="p-4 rounded-2xl bg-[#292929] border border-[#383838] mb-4">
+              <FileText className="w-12 h-12 text-[#DA4B2A]" />
+            </div>
+            <h3 className="text-base font-semibold text-[#F2F0ED]">{activeArtifact.title}</h3>
+            <p className="text-xs text-[#A5A29F] mt-2 leading-relaxed">
+              Formatted PDF document ready for binary export. Generated with LUMA AI typography, pagination, and headers.
             </p>
-            <button
-              onClick={handleDownload}
-              className="mt-4 flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-white shadow-sm"
-              style={{ backgroundColor: '#DA4B2A' }}
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Download PDF Document</span>
-            </button>
+            <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold text-white shadow-lg hover:brightness-110 active:scale-95 transition-all"
+                style={{ backgroundColor: '#DA4B2A' }}
+              >
+                <Download className="w-4 h-4" />
+                <span>Download .pdf Document</span>
+              </button>
+              <button
+                onClick={handleCopyCode}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-medium text-[#A5A29F] hover:text-[#F2F0ED] border border-[#383838] hover:bg-[#292929] transition-colors"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-[#DA4B2A]" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>Copy Source</span>
+              </button>
+            </div>
           </div>
         )}
       </div>

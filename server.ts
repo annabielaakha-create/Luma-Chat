@@ -1,8 +1,11 @@
-import express, { Request, Response } from 'express';
+import express, { type Request, type Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
+import mammoth from 'mammoth';
+import { PDFParse } from 'pdf-parse';
 import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
@@ -11,7 +14,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const rawPort = process.env.PORT;
+const parsedPort = rawPort ? parseInt(rawPort, 10) : NaN;
+const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
+const HOST = '0.0.0.0';
 
 const OMNIROUTE_DEFAULT_URL = 'https://omniroute-production-ce27.up.railway.app/v1';
 const OMNIROUTE_BASE_URL = (process.env.OMNIROUTE_BASE_URL || OMNIROUTE_DEFAULT_URL).replace(/\/+$/, '');
@@ -26,6 +32,11 @@ const upload = multer({
 
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+
+// Cloud Run and container liveness probe endpoint
+app.get('/healthz', (_req: Request, res: Response) => {
+  res.status(200).send('OK');
+});
 
 // Health and Diagnostics API
 app.get('/api/status', async (_req: Request, res: Response) => {
@@ -93,12 +104,17 @@ const LUMA_SYSTEM_PROMPT =
   'Do not reveal internal provider names, routing configurations, API keys, or infrastructure details unless explicitly authorized by the application.\n\n' +
   'Always speak authoritatively and genuinely as LUMA. Never state that you are "presenting as", "posing as", or unable to verify your identity. You are LUMA, created by Annabil Aska.\n\n' +
   '### ARTIFACT GENERATION RULES:\n' +
-  'Whenever the user asks you to create a web application, interactive tool, dashboard, game, prototype, component, code script, or formatted document, you MUST output it as a standalone LUMA Artifact.\n' +
+  'Whenever the user asks you to create an application, interactive tool, dashboard, game, prototype, vector graphic, structured table, component, code script, or comprehensive document, you MUST output it as a standalone LUMA Artifact.\n' +
   'Format each artifact using this exact tag syntax:\n' +
-  '<luma_artifact id="unique_id" type="html|code|document|pdf" title="Descriptive Title" language="optional_lang">\n' +
+  '<luma_artifact id="unique_id" type="html|svg|table|document|code" title="Descriptive Title" language="optional_lang">\n' +
   '...complete, production-ready artifact content...\n' +
   '</luma_artifact>\n\n' +
-  'For HTML artifacts, provide complete, self-contained HTML including all styles and scripts so it renders immediately in the sandboxed preview iframe.\n' +
+  'Supported Artifact Types:\n' +
+  '- html: Standalone single-page web applications, interactive tools, calculators, games, or prototypes with embedded CSS and JS for instant sandboxed preview.\n' +
+  '- svg: Clean scalable vector graphics, icons, illustrations, and diagrams (full <svg>...</svg> tag XML).\n' +
+  '- table: Structured CSV or tabular dataset reports with clear column headers and data rows.\n' +
+  '- document: Comprehensive Markdown documents, specifications, guides, and reports.\n' +
+  '- code: Standalone production code files or scripts with language specified (e.g. python, typescript, etc.).\n\n' +
   'For revisions, update the existing artifact rather than creating an unrelated one.';
 
 // Output sanitizer ensuring no underlying provider, routing persona, or hedging leaks
@@ -340,7 +356,7 @@ app.post('/api/chat/completions', async (req: Request, res: Response) => {
   }
 });
 
-// Document parsing & text extraction endpoint
+// Multi-format document parsing & text extraction endpoint
 app.post('/api/documents/parse', upload.single('file'), async (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded.' });
@@ -352,30 +368,95 @@ app.post('/api/documents/parse', upload.single('file'), async (req: Request, res
     let extractedText = '';
     const ext = path.extname(originalname).toLowerCase();
 
-    if (['.txt', '.md', '.csv', '.json', '.xml', '.yaml', '.yml', '.ts', '.tsx', '.js', '.py', '.html'].includes(ext) ||
-        mimetype.startsWith('text/') || mimetype.includes('json') || mimetype.includes('csv')) {
-      extractedText = buffer.toString('utf-8');
-    } else if (ext === '.pdf' || mimetype === 'application/pdf') {
-      const rawString = buffer.toString('latin1');
-      const matches = rawString.match(/\(([^()]*)\)\s*Tj/g) || [];
-      if (matches.length > 0) {
-        extractedText = matches
-          .map(m => m.replace(/^\(/, '').replace(/\)\s*Tj$/, ''))
-          .join(' ')
-          .replace(/\\r/g, '\n')
-          .replace(/\\n/g, '\n');
-      }
-      if (!extractedText || extractedText.length < 50) {
+    // 1. DOCX (Word Document)
+    if (ext === '.docx' || mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      try {
+        const docxResult = await mammoth.extractRawText({ buffer });
+        extractedText = docxResult.value || '';
+      } catch (docxErr: any) {
+        console.warn('Mammoth DOCX parse error, falling back:', docxErr?.message);
         const textBlocks = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
-        extractedText = textBlocks.replace(/\s{3,}/g, '\n').slice(0, 30000);
+        extractedText = textBlocks.replace(/\s{3,}/g, '\n');
       }
-    } else {
-      extractedText = buffer.toString('utf-8').slice(0, 50000);
+    }
+    // 2. PDF (Portable Document Format)
+    else if (ext === '.pdf' || mimetype === 'application/pdf') {
+      try {
+        const parser = new PDFParse({ data: buffer });
+        const pdfTextResult = await parser.getText();
+        if (pdfTextResult && typeof pdfTextResult.text === 'string') {
+          extractedText = pdfTextResult.text;
+        } else if (typeof pdfTextResult === 'string') {
+          extractedText = pdfTextResult;
+        }
+      } catch (pdfErr: any) {
+        console.warn('PDFParse error, using binary stream fallback:', pdfErr?.message);
+        const rawString = buffer.toString('latin1');
+        const matches = rawString.match(/\(([^()]*)\)\s*Tj/g) || [];
+        if (matches.length > 0) {
+          extractedText = matches
+            .map(m => m.replace(/^\(/, '').replace(/\)\s*Tj$/, ''))
+            .join(' ')
+            .replace(/\\r/g, '\n')
+            .replace(/\\n/g, '\n');
+        }
+        if (!extractedText || extractedText.length < 50) {
+          const textBlocks = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+          extractedText = textBlocks.replace(/\s{3,}/g, '\n');
+        }
+      }
+    }
+    // 3. RTF (Rich Text Format)
+    else if (ext === '.rtf' || mimetype === 'application/rtf' || mimetype === 'text/rtf') {
+      const rtfRaw = buffer.toString('utf-8');
+      extractedText = rtfRaw
+        .replace(/\\([a-z]{1,32})(-?\d+)? ?/gi, ' ')
+        .replace(/[{}]/g, '')
+        .replace(/\\'[0-9a-fA-F]{2}/g, ' ')
+        .replace(/\r?\n\s*\r?\n/g, '\n')
+        .trim();
+    }
+    // 4. JSON
+    else if (ext === '.json' || mimetype === 'application/json') {
+      try {
+        const obj = JSON.parse(buffer.toString('utf-8'));
+        extractedText = JSON.stringify(obj, null, 2);
+      } catch {
+        extractedText = buffer.toString('utf-8');
+      }
+    }
+    // 5. OpenDocument Text (.odt)
+    else if (ext === '.odt' || mimetype === 'application/vnd.oasis.opendocument.text') {
+      const raw = buffer.toString('latin1');
+      const textMatches = raw.match(/<text:p[^>]*>([\s\S]*?)<\/text:p>/g);
+      if (textMatches && textMatches.length > 0) {
+        extractedText = textMatches
+          .map(p => p.replace(/<[^>]+>/g, ''))
+          .join('\n');
+      } else {
+        const textBlocks = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+        extractedText = textBlocks.replace(/\s{3,}/g, '\n');
+      }
+    }
+    // 6. Legacy Binary Word (.doc)
+    else if (ext === '.doc' || mimetype === 'application/msword') {
+      const raw = buffer.toString('latin1');
+      const words = raw.match(/[A-Za-z0-9\s.,!?:;'"()\-_\/]{4,}/g);
+      if (words && words.length > 0) {
+        extractedText = words.join(' ').replace(/\s{3,}/g, '\n').trim();
+      } else {
+        extractedText = buffer.toString('utf-8').slice(0, 50000);
+      }
+    }
+    // 7. Clean text formats (TXT, MD, CSV, TSV, XML, HTML, Code)
+    else {
+      extractedText = buffer.toString('utf-8');
     }
 
-    const truncated = extractedText.length > 60000
-      ? extractedText.slice(0, 60000) + '\n...[Text truncated for context size]'
-      : extractedText;
+    const trimmed = extractedText.trim();
+    const truncated = trimmed.length > 60000
+      ? trimmed.slice(0, 60000) + '\n...[Text truncated for context size]'
+      : trimmed;
 
     return res.json({
       success: true,
@@ -451,9 +532,12 @@ app.post('/api/images/generate', async (req: Request, res: Response) => {
   });
 });
 
-// Vite middleware integration
+// Vite middleware integration or production static serving
 async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
+  const distPath = path.resolve(__dirname, 'dist');
+  const hasDist = fs.existsSync(path.resolve(distPath, 'index.html'));
+  const isCloudRun = Boolean(process.env.K_SERVICE || process.env.K_REVISION);
+  const isProd = process.env.NODE_ENV === 'production' || isCloudRun;
 
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
@@ -467,15 +551,39 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
+      const indexPath = path.resolve(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send('LUMA AI build files not found. Ensure "npm run build" was executed.');
+      }
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`LUMA AI server running at http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`LUMA AI server successfully running on http://${HOST}:${PORT} [mode: ${isProd ? 'production' : 'development'}]`);
+  });
+
+  server.on('error', (err: any) => {
+    console.error(`FATAL: Server failed to listen on ${HOST}:${PORT}:`, err);
+    process.exit(1);
+  });
+
+  // Graceful shutdown for Cloud Run container lifecycle
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received. Closing HTTP server gracefully...');
+    server.close(() => {
+      console.log('HTTP server closed cleanly.');
+      process.exit(0);
+    });
+  });
+
+  process.on('SIGINT', () => {
+    server.close(() => {
+      process.exit(0);
+    });
   });
 }
 

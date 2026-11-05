@@ -189,79 +189,81 @@ export default function App() {
 
         {/* Tab Viewports & Split-Screen Artifact Panel */}
         <main className="flex-1 flex overflow-hidden relative">
-          {activeTab === 'chat' && (
-            <div className="flex-1 flex h-full overflow-hidden relative">
-              {/* Left Side: Conversation Area */}
+          {/* Chat Workspace: Kept mounted so generation state, SSE stream, and loading animations persist across tab navigation */}
+          <div className={`flex-1 flex h-full overflow-hidden relative ${activeTab === 'chat' ? '' : 'hidden'}`}>
+            {/* Left Side: Conversation Area */}
+            <div
+              className={`h-full flex flex-col transition-all duration-200 overflow-hidden ${
+                isArtifactWorkspaceOpen && hasArtifactsInActiveChat && !isArtifactFullScreen
+                  ? 'w-full md:w-1/2 lg:w-[48%]'
+                  : 'w-full'
+              }`}
+            >
+              <ChatWorkspace
+                activeConversationId={activeConversationId}
+                messages={messages}
+                onSaveMessage={saveMessage}
+                onCreateConversation={createConversation}
+                onSaveToLibrary={handleSaveToLibrary}
+                onOpenDocumentUpload={() => setActiveTab('documents')}
+                composerInitialText={composerInitialText}
+                onComposerTextConsumed={() => setComposerInitialText('')}
+                onOpenArtifact={handleOpenArtifact}
+                activeArtifactId={activeArtifactId}
+                user={user}
+              />
+            </div>
+
+            {/* Right Side: Contextual Artifact Workspace Panel */}
+            {isArtifactWorkspaceOpen && hasArtifactsInActiveChat && (
               <div
-                className={`h-full flex flex-col transition-all duration-200 overflow-hidden ${
-                  isArtifactWorkspaceOpen && hasArtifactsInActiveChat && !isArtifactFullScreen
-                    ? 'w-full md:w-1/2 lg:w-[48%]'
-                    : 'w-full'
+                className={`h-full transition-all duration-200 overflow-hidden ${
+                  isArtifactFullScreen
+                    ? 'fixed inset-0 z-50'
+                    : 'hidden md:flex md:w-1/2 lg:w-[52%]'
                 }`}
               >
-                <ChatWorkspace
-                  activeConversationId={activeConversationId}
-                  messages={messages}
-                  onSaveMessage={saveMessage}
-                  onCreateConversation={createConversation}
-                  onSaveToLibrary={handleSaveToLibrary}
-                  onOpenDocumentUpload={() => setActiveTab('documents')}
-                  composerInitialText={composerInitialText}
-                  onComposerTextConsumed={() => setComposerInitialText('')}
-                  onOpenArtifact={handleOpenArtifact}
+                <ArtifactWorkspace
+                  artifacts={activeConversationArtifacts}
                   activeArtifactId={activeArtifactId}
-                  user={user}
+                  onSelectArtifact={(id) => setActiveArtifactId(id)}
+                  onClose={() => setIsArtifactWorkspaceOpen(false)}
+                  onReviseArtifact={handleReviseArtifact}
+                  isFullScreen={isArtifactFullScreen}
+                  onToggleFullScreen={() => setIsArtifactFullScreen(!isArtifactFullScreen)}
                 />
               </div>
+            )}
+          </div>
 
-              {/* Right Side: Contextual Artifact Workspace Panel */}
-              {isArtifactWorkspaceOpen && hasArtifactsInActiveChat && (
-                <div
-                  className={`h-full transition-all duration-200 overflow-hidden ${
-                    isArtifactFullScreen
-                      ? 'fixed inset-0 z-50'
-                      : 'hidden md:flex md:w-1/2 lg:w-[52%]'
-                  }`}
-                >
-                  <ArtifactWorkspace
-                    artifacts={activeConversationArtifacts}
-                    activeArtifactId={activeArtifactId}
-                    onSelectArtifact={(id) => setActiveArtifactId(id)}
-                    onClose={() => setIsArtifactWorkspaceOpen(false)}
-                    onReviseArtifact={handleReviseArtifact}
-                    isFullScreen={isArtifactFullScreen}
-                    onToggleFullScreen={() => setIsArtifactFullScreen(!isArtifactFullScreen)}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'documents' && (
+          {/* Document Workspace */}
+          <div className={`flex-1 h-full overflow-hidden ${activeTab === 'documents' ? '' : 'hidden'}`}>
             <DocumentWorkspace
               documents={documents}
               onAddDocument={addDocument}
               onDeleteDocument={deleteDocument}
               onAskAboutDocument={handleAskAboutDocument}
             />
-          )}
+          </div>
 
-          {activeTab === 'images' && (
+          {/* Image Workspace */}
+          <div className={`flex-1 h-full overflow-hidden ${activeTab === 'images' ? '' : 'hidden'}`}>
             <ImageWorkspace
               images={images}
               onAddImage={addImage}
               onDeleteImage={deleteImage}
               onAnalyzeImageInChat={handleAnalyzeImageInChat}
             />
-          )}
+          </div>
 
-          {activeTab === 'library' && (
+          {/* Library Workspace */}
+          <div className={`flex-1 h-full overflow-hidden ${activeTab === 'library' ? '' : 'hidden'}`}>
             <LibraryWorkspace
               items={libraryItems}
               onDeleteItem={deleteFromLibrary}
               onReuseItemInChat={handleReuseLibraryItem}
             />
-          )}
+          </div>
         </main>
       </div>
 

@@ -1,6 +1,6 @@
 export type WorkspaceTab = 'chat' | 'documents' | 'images' | 'library';
 
-export type ArtifactType = 'html' | 'code' | 'document' | 'pdf';
+export type ArtifactType = 'html' | 'code' | 'document' | 'markdown' | 'svg' | 'table' | 'csv' | 'pdf';
 
 export interface Artifact {
   id: string;

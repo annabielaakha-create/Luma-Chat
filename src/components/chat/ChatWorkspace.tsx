@@ -23,6 +23,13 @@ interface ChatWorkspaceProps {
   user?: User | null;
 }
 
+export interface ActiveGeneration {
+  conversationId: string;
+  generationId: string;
+  stage: LumaLoadingStage;
+  startTime: number;
+}
+
 export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   activeConversationId,
   messages,
@@ -37,12 +44,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   user
 }) => {
   const [isGenerating, setIsGenerating] = useState(false);
-  const [loadingStage, setLoadingStage] = useState<LumaLoadingStage | null>(null);
+  const [activeGeneration, setActiveGeneration] = useState<ActiveGeneration | null>(null);
   const [streamingAssistantMsg, setStreamingAssistantMsg] = useState<ChatMessage | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pendingUserPrompt, setPendingUserPrompt] = useState<{ content: string; attachments?: Attachment[] } | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
+  const activeGenRef = useRef<ActiveGeneration | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -65,13 +73,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
     if (isAtBottom) {
       scrollToBottom(messages.length <= 2 ? 'auto' : 'smooth');
     }
-  }, [messages, streamingAssistantMsg, loadingStage, isAtBottom, scrollToBottom]);
+  }, [messages, streamingAssistantMsg, activeGeneration, isAtBottom, scrollToBottom]);
 
   const handleSendMessage = async (content: string, attachments: Attachment[] = []) => {
     setErrorMessage(null);
     let targetConvId = activeConversationId;
 
-    // Create a new conversation if none is active
+    // 1. Immediately create a conversation if none is active with optimistic title
     if (!targetConvId) {
       const summaryTitle = content.trim().slice(0, 36) || 'New Conversation';
       targetConvId = await onCreateConversation('LUMA 1.0', summaryTitle);
@@ -79,7 +87,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
 
     const currentUid = user ? user.uid : 'guest';
 
-    // 1. Immediately display and persist user's message
+    // 2. Immediately persist user's message
     const userMessageId = 'msg_' + Date.now();
     const userMessage: ChatMessage = {
       id: userMessageId,
@@ -91,11 +99,20 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
       createdAt: new Date().toISOString()
     };
 
+    // Fire and await user message save
     await onSaveMessage(userMessage);
 
-    // 2. Immediately activate LUMA loading indicator in Thinking state
+    // 3. Immediately activate persistent generation tracking
+    const generationId = 'gen_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const initialGenState: ActiveGeneration = {
+      conversationId: targetConvId,
+      generationId,
+      stage: 'thinking',
+      startTime: Date.now()
+    };
+    activeGenRef.current = initialGenState;
+    setActiveGeneration(initialGenState);
     setIsGenerating(true);
-    setLoadingStage('thinking');
     setStreamingAssistantMsg(null);
     scrollToBottom('smooth');
 
@@ -136,7 +153,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           // Transition to Writing state when tokens start arriving
           if (!firstTokenReceived && chunk.trim()) {
             firstTokenReceived = true;
-            setLoadingStage('writing');
+            if (activeGenRef.current && activeGenRef.current.generationId === generationId) {
+              const writingGen = { ...activeGenRef.current, stage: 'writing' as LumaLoadingStage };
+              activeGenRef.current = writingGen;
+              setActiveGeneration(writingGen);
+            }
           }
 
           const liveParsed = extractArtifactsFromMessage(assistantMessageId, targetConvId, accumulatedText);
@@ -153,8 +174,12 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         }
       });
 
-      // 3. Finalization stage: parse artifacts & persist finished response
-      setLoadingStage('finishing');
+      // 4. Finalization stage: parse artifacts & persist finished response
+      if (activeGenRef.current && activeGenRef.current.generationId === generationId) {
+        const finishingGen = { ...activeGenRef.current, stage: 'finishing' as LumaLoadingStage };
+        activeGenRef.current = finishingGen;
+        setActiveGeneration(finishingGen);
+      }
 
       const parsed = extractArtifactsFromMessage(assistantMessageId, targetConvId, accumulatedText);
       const finalAssistantMessage: ChatMessage = {
@@ -197,8 +222,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         setStreamingAssistantMsg(null);
       }
     } finally {
-      setIsGenerating(false);
-      setLoadingStage(null);
+      if (activeGenRef.current?.generationId === generationId) {
+        activeGenRef.current = null;
+        setActiveGeneration(null);
+        setIsGenerating(false);
+      }
       abortControllerRef.current = null;
     }
   };
@@ -221,7 +249,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
     handleSendMessage(promptText);
   };
 
-  const hasMessages = messages.length > 0 || Boolean(streamingAssistantMsg) || Boolean(loadingStage);
+  const hasMessages = messages.length > 0 || Boolean(streamingAssistantMsg) || Boolean(activeGeneration);
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden relative">
@@ -266,9 +294,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               />
             )}
 
-            {/* LUMA Loading & Thinking Indicator (Thinking / Finishing up) */}
-            {loadingStage && (!streamingAssistantMsg || loadingStage === 'thinking' || loadingStage === 'finishing') && (
-              <LumaLoadingIndicator stage={loadingStage} />
+            {/* LUMA Loading & Status Indicator */}
+            {activeGeneration && activeGeneration.conversationId === activeConversationId && (!streamingAssistantMsg || activeGeneration.stage === 'thinking' || activeGeneration.stage === 'finishing') && (
+              <LumaLoadingIndicator stage={activeGeneration.stage} />
             )}
 
             <div ref={messagesEndRef} />
