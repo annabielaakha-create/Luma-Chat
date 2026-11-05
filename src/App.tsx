@@ -1,6 +1,6 @@
 /**
  * LUMA AI — Multi-model AI Workspace
- * Created by Luma Studio
+ * Created by Annabil Aska
  * @license Apache-2.0
  */
 
@@ -210,6 +210,7 @@ export default function App() {
                   onComposerTextConsumed={() => setComposerInitialText('')}
                   onOpenArtifact={handleOpenArtifact}
                   activeArtifactId={activeArtifactId}
+                  user={user}
                 />
               </div>
 

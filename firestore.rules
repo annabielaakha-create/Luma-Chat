@@ -18,57 +18,68 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // User profile documents
+    // Validates that the authenticated user owns the parent conversation document
+    function isConversationOwner(conversationId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == request.auth.uid;
+    }
+
+    // User profile documents: users/{userId}
     match /users/{userId} {
       allow get: if isOwner(userId);
       allow create: if isOwner(userId) && request.resource.data.userId == request.auth.uid;
-      allow update: if isOwner(userId) && request.resource.data.userId == request.auth.uid;
+      allow update: if isOwner(userId) && request.resource.data.userId == resource.data.userId;
       allow delete: if isOwner(userId);
       allow list: if false;
     }
 
-    // Conversations
+    // Conversations collection: conversations/{conversationId}
     match /conversations/{conversationId} {
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidId(conversationId);
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == resource.data.userId;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
 
-      // Messages subcollection
+      // Messages subcollection: conversations/{conversationId}/messages/{messageId}
+      // Validates message ownership strictly through the parent conversation document
       match /messages/{messageId} {
-        allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-        allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidId(messageId);
-        allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
-        allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+        allow get, list: if isConversationOwner(conversationId);
+        allow create: if isConversationOwner(conversationId) &&
+          isValidId(messageId) &&
+          (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid);
+        allow update: if isConversationOwner(conversationId) &&
+          isValidId(messageId) &&
+          (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&
+          (!('userId' in resource.data) || !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId);
+        allow delete: if isConversationOwner(conversationId);
       }
     }
 
-    // Documents collection
+    // Documents collection: documents/{documentId}
     match /documents/{documentId} {
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidId(documentId);
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == resource.data.userId;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
-    // Images collection
+    // Images collection: images/{imageId}
     match /images/{imageId} {
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidId(imageId);
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == resource.data.userId;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
-    // Library collection
+    // Library collection: library/{libraryId}
     match /library/{libraryId} {
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid && isValidId(libraryId);
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == resource.data.userId;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
   }

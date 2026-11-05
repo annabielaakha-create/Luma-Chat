@@ -54,7 +54,7 @@ export const LumaLogo: React.FC<LumaLogoProps> = ({
           </div>
           {showCreator && (
             <span className={`text-[#77736F] font-medium leading-tight ${dimensions.creator}`}>
-              by Luma Studio
+              by Annabil Aska
             </span>
           )}
         </div>

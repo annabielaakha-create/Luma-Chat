@@ -10,7 +10,8 @@ import {
   setDoc,
   deleteDoc,
   updateDoc,
-  getDocs
+  getDocs,
+  getDoc
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../services/firebase';
 import { Conversation, ChatMessage } from '../types';
@@ -158,25 +159,61 @@ export function useConversations(user: User | null) {
   // Save or update a message
   const saveMessage = useCallback(
     async (msg: ChatMessage) => {
+      // Clean and ensure valid properties without undefined values
+      const sanitizedMsg: Record<string, any> = {
+        id: msg.id,
+        conversationId: msg.conversationId,
+        userId: user ? user.uid : 'guest',
+        role: msg.role,
+        content: msg.content || '',
+        createdAt: msg.createdAt || new Date().toISOString()
+      };
+      if (msg.model) sanitizedMsg.model = msg.model;
+      if (msg.attachments && msg.attachments.length > 0) sanitizedMsg.attachments = msg.attachments;
+      if (msg.artifacts && msg.artifacts.length > 0) sanitizedMsg.artifacts = msg.artifacts;
+      if (msg.isStreaming !== undefined) sanitizedMsg.isStreaming = Boolean(msg.isStreaming);
+
+      // Optimistically update local message state immediately
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === msg.id);
+        const resolved: ChatMessage = {
+          ...msg,
+          userId: user ? user.uid : 'guest'
+        };
         if (idx >= 0) {
           const next = [...prev];
-          next[idx] = msg;
+          next[idx] = resolved;
           return next;
         }
-        return [...prev, msg];
+        return [...prev, resolved];
       });
 
       if (user) {
         const path = `conversations/${msg.conversationId}/messages/${msg.id}`;
         try {
-          await setDoc(doc(db, 'conversations', msg.conversationId, 'messages', msg.id), msg);
-          // Update conversation updatedAt and lastMessage
-          await updateDoc(doc(db, 'conversations', msg.conversationId), {
-            updatedAt: new Date().toISOString(),
-            lastMessage: msg.content.slice(0, 120)
-          });
+          const convRef = doc(db, 'conversations', msg.conversationId);
+          // Verify that the parent conversation document exists in Firestore before writing subcollection message
+          const convSnap = await getDoc(convRef);
+          if (!convSnap.exists()) {
+            await setDoc(convRef, {
+              id: msg.conversationId,
+              userId: user.uid,
+              title: msg.content.trim().slice(0, 36) || 'New Conversation',
+              model: msg.model || 'LUMA 1.0',
+              createdAt: msg.createdAt || new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              lastMessage: (msg.content || '').slice(0, 120),
+              messageCount: 1
+            });
+          } else {
+            await updateDoc(convRef, {
+              updatedAt: new Date().toISOString(),
+              lastMessage: (msg.content || '').slice(0, 120)
+            });
+          }
+
+          // Persist message with verified user.uid ownership
+          await setDoc(doc(db, 'conversations', msg.conversationId, 'messages', msg.id), sanitizedMsg);
         } catch (err) {
           handleFirestoreError(err, OperationType.WRITE, path);
         }
@@ -199,7 +236,7 @@ export function useConversations(user: User | null) {
         // Update conversation summary
         const updatedConvs = conversations.map((c) =>
           c.id === msg.conversationId
-            ? { ...c, updatedAt: new Date().toISOString(), lastMessage: msg.content.slice(0, 120) }
+            ? { ...c, updatedAt: new Date().toISOString(), lastMessage: (msg.content || '').slice(0, 120) }
             : c
         );
         setConversations(updatedConvs);
