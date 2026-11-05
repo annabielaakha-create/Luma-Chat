@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+:root {
+  --color-brand: #DA4B2A;
+  --color-brand-hover: #E45B3D;
+  --color-brand-muted: #A83B24;
+  --color-background: #202020;
+  --color-sidebar: #191919;
+  --color-surface: #292929;
+  --color-surface-elevated: #303030;
+  --color-border: #383838;
+  --color-text-primary: #F2F0ED;
+  --color-text-secondary: #A5A29F;
+  --color-text-muted: #77736F;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom smooth dark scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #383838;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a;
+}
+
+/* Code block formatting */
+pre code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+/* Markdown prose overrides for LUMA */
+.luma-prose p {
+  margin-bottom: 0.85rem;
+  line-height: 1.65;
+}
+.luma-prose p:last-child {
+  margin-bottom: 0;
+}
+.luma-prose h1, .luma-prose h2, .luma-prose h3, .luma-prose h4 {
+  color: #F2F0ED;
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+.luma-prose h1 { font-size: 1.35rem; }
+.luma-prose h2 { font-size: 1.2rem; }
+.luma-prose h3 { font-size: 1.05rem; }
+.luma-prose ul, .luma-prose ol {
+  margin-left: 1.25rem;
+  margin-bottom: 0.75rem;
+}
+.luma-prose li {
+  margin-bottom: 0.25rem;
+}
+.luma-prose code:not(pre code) {
+  background-color: #303030;
+  color: #F2F0ED;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.825em;
+  font-family: 'JetBrains Mono', monospace;
+  border: 1px solid #383838;
+}
+.luma-prose blockquote {
+  border-left: 3px solid #DA4B2A;
+  padding-left: 1rem;
+  color: #A5A29F;
+  margin: 0.75rem 0;
+  font-style: italic;
+}
+.luma-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.875rem;
+}
+.luma-prose th, .luma-prose td {
+  border: 1px solid #383838;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+.luma-prose th {
+  background-color: #292929;
+  color: #F2F0ED;
+  font-weight: 600;
+}
